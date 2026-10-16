@@ -34,6 +34,8 @@ struct bpf_reg_state {
 		struct bpf_map *map_ptr;
 	};
 	u32 id;
+	u32 ref_obj_id;
+	u32 mem_size;
 	/* Used to determine if any memory access using this register will
 	 * result in a bad access. These two fields must be last.
 	 * See states_equal()
@@ -54,10 +56,14 @@ enum bpf_stack_slot_type {
 /* state of the program:
  * type of all registers and stack info
  */
+#define BPF_MAX_REFS 32
+
 struct bpf_verifier_state {
 	struct bpf_reg_state regs[MAX_BPF_REG];
 	u8 stack_slot_type[MAX_BPF_STACK];
 	struct bpf_reg_state spilled_regs[MAX_BPF_STACK / BPF_REG_SIZE];
+	u32 acquired_refs[BPF_MAX_REFS];
+	u32 acquired_ref_cnt;
 };
 
 /* linked list of verifier states used to prune search */

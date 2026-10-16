@@ -15,6 +15,8 @@
 
 struct perf_event;
 struct bpf_map;
+struct vm_area_struct;
+struct poll_table_struct;
 
 /* map is generic key/value storage optionally accesible by eBPF programs */
 struct bpf_map_ops {
@@ -33,6 +35,9 @@ struct bpf_map_ops {
 	void *(*map_fd_get_ptr)(struct bpf_map *map, struct file *map_file,
 				int fd);
 	void (*map_fd_put_ptr)(void *ptr);
+	int (*map_mmap)(struct bpf_map *map, struct vm_area_struct *vma);
+	unsigned int (*map_poll)(struct bpf_map *map, struct file *file,
+				 struct poll_table_struct *pts);
 };
 
 struct bpf_map {
@@ -45,6 +50,8 @@ struct bpf_map {
 	u32 value_size;
 	u32 max_entries;
 	u32 map_flags;
+	u32 id;
+	char name[BPF_OBJ_NAME_LEN];
 	u32 pages;
 	bool unpriv_array;
 	/* 7 bytes hole */
@@ -92,6 +99,11 @@ enum bpf_arg_type {
 
 	ARG_PTR_TO_CTX,		/* pointer to context */
 	ARG_ANYTHING,		/* any (initialized) argument is ok */
+	ARG_CONST_ALLOC_SIZE_OR_ZERO,
+	ARG_PTR_TO_ALLOC_MEM,
+	ARG_PTR_TO_SOCKET,
+	ARG_PTR_TO_SOCKET_OR_NULL,
+	ARG_PTR_TO_MAP_VALUE_OR_NULL,
 };
 
 /* type of values returned from helper functions */
@@ -99,6 +111,9 @@ enum bpf_return_type {
 	RET_INTEGER,			/* function returns integer */
 	RET_VOID,			/* function doesn't return anything */
 	RET_PTR_TO_MAP_VALUE_OR_NULL,	/* returns a pointer to map elem value or NULL */
+	RET_PTR_TO_ALLOC_MEM_OR_NULL,
+	RET_PTR_TO_SOCKET_OR_NULL,
+	RET_PTR_TO_SOCK_COMMON_OR_NULL,
 };
 
 /* eBPF function prototype used by verifier to allow BPF_CALLs from eBPF programs
@@ -158,9 +173,21 @@ enum bpf_reg_type {
 	 * map element.
 	 */
 	PTR_TO_MAP_VALUE_ADJ,
+	PTR_TO_ALLOC_MEM,
+	PTR_TO_ALLOC_MEM_OR_NULL,
+	PTR_TO_SOCKET,
+	PTR_TO_SOCKET_OR_NULL,
+	PTR_TO_SOCK_COMMON,
+	PTR_TO_SOCK_COMMON_OR_NULL,
 };
 
 struct bpf_prog;
+bool bpf_sock_is_valid_access(int off, int size, enum bpf_access_type type,
+			    enum bpf_reg_type *reg);
+u32 bpf_sock_convert_ctx_access(enum bpf_access_type type, int dst, int src,
+				int off, struct bpf_insn *buf, struct bpf_prog *prog);
+
+int bpf_prog_calc_tag(struct bpf_prog *prog);
 
 struct bpf_verifier_ops {
 	/* return eBPF function prototype for verification */
@@ -171,6 +198,8 @@ struct bpf_verifier_ops {
 	 */
 	bool (*is_valid_access)(int off, int size, enum bpf_access_type type,
 				enum bpf_reg_type *reg_type);
+	bool (*is_valid_access_ext)(int off, int size, enum bpf_access_type type,
+				    const struct bpf_prog *prog, enum bpf_reg_type *reg_type);
 	int (*gen_prologue)(struct bpf_insn *insn, bool direct_write,
 			    const struct bpf_prog *prog);
 	u32 (*convert_ctx_access)(enum bpf_access_type type, int dst_reg,
@@ -188,6 +217,10 @@ struct bpf_prog_aux {
 	atomic_t refcnt;
 	u32 used_map_cnt;
 	u32 max_ctx_offset;
+	u32 expected_attach_type;
+	u32 id;
+	u64 load_time;
+	char name[BPF_OBJ_NAME_LEN];
 	const struct bpf_verifier_ops *ops;
 	struct bpf_map **used_maps;
 	struct bpf_prog *prog;
@@ -378,6 +411,11 @@ extern const struct bpf_func_proto bpf_get_prandom_u32_proto;
 extern const struct bpf_func_proto bpf_get_smp_processor_id_proto;
 extern const struct bpf_func_proto bpf_tail_call_proto;
 extern const struct bpf_func_proto bpf_ktime_get_ns_proto;
+extern const struct bpf_func_proto bpf_ktime_get_boot_ns_proto;
+extern const struct bpf_func_proto bpf_ringbuf_output_proto;
+extern const struct bpf_func_proto bpf_ringbuf_reserve_proto;
+extern const struct bpf_func_proto bpf_ringbuf_submit_proto;
+extern const struct bpf_func_proto bpf_ringbuf_discard_proto;
 extern const struct bpf_func_proto bpf_get_current_pid_tgid_proto;
 extern const struct bpf_func_proto bpf_get_current_uid_gid_proto;
 extern const struct bpf_func_proto bpf_get_current_comm_proto;

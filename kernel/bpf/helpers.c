@@ -17,6 +17,7 @@
 #include <linux/sched.h>
 #include <linux/uidgid.h>
 #include <linux/filter.h>
+#include <linux/timekeeping.h>
 
 /* If kernel subsystem is allowing eBPF programs to call this function,
  * inside its own verifier_ops->get_func_proto() callback it should return
@@ -166,4 +167,15 @@ const struct bpf_func_proto bpf_get_current_comm_proto = {
 	.ret_type	= RET_INTEGER,
 	.arg1_type	= ARG_PTR_TO_RAW_STACK,
 	.arg2_type	= ARG_CONST_STACK_SIZE,
+};
+
+BPF_CALL_0(bpf_ktime_get_boot_ns)
+{
+	return ktime_get_boot_ns();
+}
+
+const struct bpf_func_proto bpf_ktime_get_boot_ns_proto = {
+	.func = bpf_ktime_get_boot_ns,
+	.gpl_only = false,
+	.ret_type = RET_INTEGER,
 };

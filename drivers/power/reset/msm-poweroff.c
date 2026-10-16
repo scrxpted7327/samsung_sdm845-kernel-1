@@ -114,6 +114,7 @@ static struct kobject dload_kobj;
 static void *dload_type_addr;
 
 static bool force_warm_reboot;
+module_param(force_warm_reboot, bool, 0644);
 
 static int dload_set(const char *val, const struct kernel_param *kp);
 /* interface for exporting attributes */
@@ -825,7 +826,7 @@ skip_sysfs_create:
 	if (!download_mode)
 		scm_disable_sdi();
 
-	force_warm_reboot = of_property_read_bool(dev->of_node,
+	force_warm_reboot |= of_property_read_bool(dev->of_node,
 						"qcom,force-warm-reboot");
 
 	return 0;

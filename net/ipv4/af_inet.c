@@ -67,6 +67,7 @@
 
 #define pr_fmt(fmt) "IPv4: " fmt
 
+#include <linux/bpf-cgroup.h>
 #include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/types.h>
@@ -392,8 +393,14 @@ lookup_protocol:
 
 	if (sk->sk_prot->init) {
 		err = sk->sk_prot->init(sk);
-		if (err)
+		if (err) {
 			sk_common_release(sk);
+			goto out;
+		}
+	}
+	if (!kern) {
+		err = bpf_cgroup_socket_create(sk);
+		if (err) { sk_common_release(sk); goto out; }
 	}
 out:
 	return err;
@@ -413,6 +420,8 @@ int inet_release(struct socket *sock)
 
 	if (sk) {
 		long timeout;
+
+		if (sk->sk_net_refcnt) bpf_cgroup_socket_release(sk);
 		
 #ifdef CONFIG_NETFILTER_XT_MATCH_QTAGUID
 		qtaguid_untag(sock, true);
@@ -438,7 +447,21 @@ int inet_release(struct socket *sock)
 }
 EXPORT_SYMBOL(inet_release);
 
+static int inet_bind_body(struct socket *, struct sockaddr *, int);
 int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+{
+	int err;
+	if (sock->sk->sk_prot->bind)
+		return sock->sk->sk_prot->bind(sock->sk, uaddr, addr_len);
+	if (addr_len < sizeof(struct sockaddr_in)) return -EINVAL;
+	lock_sock(sock->sk);
+	err = bpf_cgroup_sock_addr(sock->sk, uaddr, addr_len, BPF_CGROUP_INET4_BIND, NULL);
+	if (!err) err = inet_bind_body(sock, uaddr, addr_len);
+	release_sock(sock->sk);
+	return err;
+}
+
+static int inet_bind_body(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 {
 	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
 	struct sock *sk = sock->sk;
@@ -500,7 +523,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	 *      would be illegal to use them (multicast/broadcast) in
 	 *      which case the sending device address is used.
 	 */
-	lock_sock(sk);
+
 
 	/* Check these errors (active socket, double bind). */
 	err = -EINVAL;
@@ -529,7 +552,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	sk_dst_reset(sk);
 	err = 0;
 out_release_sock:
-	release_sock(sk);
+
 out:
 	return err;
 }
@@ -545,6 +568,14 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 	if (uaddr->sa_family == AF_UNSPEC)
 		return sk->sk_prot->disconnect(sk, flags);
 
+	{
+		int err;
+		lock_sock(sk);
+		err = bpf_cgroup_sock_addr(sk, uaddr, addr_len,
+			sk->sk_family == AF_INET6 ? BPF_CGROUP_INET6_CONNECT : BPF_CGROUP_INET4_CONNECT, NULL);
+		release_sock(sk);
+		if (err) return err;
+	}
 	if (!inet_sk(sk)->inet_num && inet_autobind(sk))
 		return -EAGAIN;
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
@@ -625,6 +656,11 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 		if (sk->sk_state != TCP_CLOSE)
 			goto out;
 
+		if (uaddr) {
+			err = bpf_cgroup_sock_addr(sk, uaddr, addr_len,
+				sk->sk_family == AF_INET6 ? BPF_CGROUP_INET6_CONNECT : BPF_CGROUP_INET4_CONNECT, NULL);
+			if (err) goto out;
+		}
 		err = sk->sk_prot->connect(sk, uaddr, addr_len);
 		if (err < 0)
 			goto out;

@@ -21,6 +21,7 @@
  *      2 of the License, or (at your option) any later version.
  */
 
+#include <linux/bpf-cgroup.h>
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/socket.h>
@@ -417,6 +418,9 @@ try_again:
 						    inet6_iif(skb));
 		}
 		*addr_len = sizeof(*sin6);
+		lock_sock(sk);
+		bpf_cgroup_sock_addr(sk, (struct sockaddr *)sin6, sizeof(*sin6), BPF_CGROUP_UDP6_RECVMSG, NULL);
+		release_sock(sk);
 	}
 
 	if (np->rxopt.all)
@@ -1285,6 +1289,20 @@ do_udp_sendmsg:
 	if (ipv6_addr_any(&fl6.saddr) && !ipv6_addr_any(&np->saddr))
 		fl6.saddr = np->saddr;
 	fl6.fl6_sport = inet->inet_sport;
+	if (!connected) {
+		lock_sock(sk);
+		err = bpf_cgroup_sock_addr(sk, (struct sockaddr *)sin6, addr_len,
+			BPF_CGROUP_UDP6_SENDMSG, &fl6.saddr);
+		release_sock(sk);
+		if (err) goto out;
+		if (sin6) {
+			if (ipv6_addr_v4mapped(&sin6->sin6_addr)) { err = -ENOTSUPP; goto out; }
+			if (!sin6->sin6_port) { err = -EINVAL; goto out; }
+			fl6.fl6_dport = sin6->sin6_port;
+			fl6.daddr = sin6->sin6_addr;
+			if (ipv6_addr_any(&fl6.daddr)) fl6.daddr.s6_addr[15] = 1;
+		}
+	}
 
 	final_p = fl6_update_dst(&fl6, opt, &final);
 	if (final_p)

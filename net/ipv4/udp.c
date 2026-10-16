@@ -79,6 +79,7 @@
 
 #define pr_fmt(fmt) "UDP: " fmt
 
+#include <linux/bpf-cgroup.h>
 #include <asm/uaccess.h>
 #include <asm/ioctls.h>
 #include <linux/bootmem.h>
@@ -988,6 +989,18 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		rcu_read_unlock();
 	}
 
+	if (!connected) {
+		struct sockaddr_in *usin = msg->msg_name;
+		lock_sock(sk);
+		err = bpf_cgroup_sock_addr(sk, (struct sockaddr *)usin, msg->msg_namelen,
+			BPF_CGROUP_UDP4_SENDMSG, &ipc.addr);
+		release_sock(sk);
+		if (err) goto out_free;
+		if (usin) {
+			if (!usin->sin_port) { err = -EINVAL; goto out_free; }
+			daddr = usin->sin_addr.s_addr; dport = usin->sin_port;
+		}
+	}
 	saddr = ipc.addr;
 	ipc.addr = faddr = daddr;
 
@@ -1333,6 +1346,9 @@ try_again:
 		sin->sin_addr.s_addr = ip_hdr(skb)->saddr;
 		memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
 		*addr_len = sizeof(*sin);
+		lock_sock(sk);
+		bpf_cgroup_sock_addr(sk, (struct sockaddr *)sin, sizeof(*sin), BPF_CGROUP_UDP4_RECVMSG, NULL);
+		release_sock(sk);
 	}
 	if (inet->cmsg_flags)
 		ip_cmsg_recv_offset(msg, skb, sizeof(struct udphdr), off);

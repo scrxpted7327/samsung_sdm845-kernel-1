@@ -20,6 +20,7 @@
 
 #define pr_fmt(fmt) "IPv6: " fmt
 
+#include <linux/bpf-cgroup.h>
 #include <linux/module.h>
 #include <linux/capability.h>
 #include <linux/errno.h>
@@ -272,6 +273,10 @@ lookup_protocol:
 			goto out;
 		}
 	}
+	if (!kern) {
+		err = bpf_cgroup_socket_create(sk);
+		if (err) { sk_common_release(sk); goto out; }
+	}
 out:
 	return err;
 out_rcu_unlock:
@@ -281,7 +286,21 @@ out_rcu_unlock:
 
 
 /* bind for INET6 API */
+static int inet6_bind_body(struct socket *, struct sockaddr *, int);
 int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+{
+	int err;
+	if (sock->sk->sk_prot->bind)
+		return sock->sk->sk_prot->bind(sock->sk, uaddr, addr_len);
+	if (addr_len < SIN6_LEN_RFC2133) return -EINVAL;
+	lock_sock(sock->sk);
+	err = bpf_cgroup_sock_addr(sock->sk, uaddr, addr_len, BPF_CGROUP_INET6_BIND, NULL);
+	if (!err) err = inet6_bind_body(sock, uaddr, addr_len);
+	release_sock(sock->sk);
+	return err;
+}
+
+static int inet6_bind_body(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 {
 	struct sockaddr_in6 *addr = (struct sockaddr_in6 *)uaddr;
 	struct sock *sk = sock->sk;
@@ -312,7 +331,7 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (snum && snum < PROT_SOCK && !ns_capable(net->user_ns, CAP_NET_BIND_SERVICE))
 		return -EACCES;
 
-	lock_sock(sk);
+
 
 	/* Check these errors (active socket, double bind). */
 	if (sk->sk_state != TCP_CLOSE || inet->inet_num) {
@@ -431,7 +450,7 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	inet->inet_dport = 0;
 	inet->inet_daddr = 0;
 out:
-	release_sock(sk);
+
 	return err;
 out_unlock:
 	rcu_read_unlock();

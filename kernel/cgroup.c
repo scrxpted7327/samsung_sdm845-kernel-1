@@ -29,6 +29,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/cgroup.h>
+#include <linux/bpf.h>
 #include <linux/cred.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
@@ -1675,6 +1676,8 @@ static int cgroup_show_options(struct seq_file *seq,
 		seq_puts(seq, ",noprefix");
 	if (root->flags & CGRP_ROOT_XATTR)
 		seq_puts(seq, ",xattr");
+	if (root->flags & CGRP_ROOT_CPUSET_V2_MODE)
+		seq_puts(seq, ",cpuset_v2_mode");
 
 	spin_lock(&release_agent_path_lock);
 	if (strlen(root->release_agent_path))
@@ -1737,6 +1740,10 @@ static int parse_cgroupfs_options(char *data, struct cgroup_sb_opts *opts)
 		}
 		if (!strcmp(token, "clone_children")) {
 			opts->cpuset_clone_children = true;
+			continue;
+		}
+		if (!strcmp(token, "cpuset_v2_mode")) {
+			opts->flags |= CGRP_ROOT_CPUSET_V2_MODE;
 			continue;
 		}
 		if (!strcmp(token, "xattr")) {
@@ -6726,15 +6733,24 @@ subsys_initcall(cgroup_namespaces_init);
 
 #ifdef CONFIG_CGROUP_BPF
 int cgroup_bpf_update(struct cgroup *cgrp, struct bpf_prog *prog,
-		      enum bpf_attach_type type, bool overridable)
+		      struct bpf_prog *old_prog, enum bpf_attach_type type, u32 flags)
 {
-	struct cgroup *parent = cgroup_parent(cgrp);
 	int ret;
-
 	mutex_lock(&cgroup_mutex);
-	ret = __cgroup_bpf_update(cgrp, parent, prog, type, overridable);
+	ret = __cgroup_bpf_update(cgrp, cgroup_parent(cgrp), prog, old_prog, type, flags);
 	mutex_unlock(&cgroup_mutex);
 	return ret;
+}
+int cgroup_bpf_query(struct cgroup *cgrp, enum bpf_attach_type type,
+		     bool effective, u32 *flags, u32 *ids, u32 capacity)
+{
+	int count;
+	if (type >= MAX_BPF_ATTACH_TYPE)
+		return -EINVAL;
+	mutex_lock(&cgroup_mutex);
+	count = __cgroup_bpf_query(cgrp, type, effective, flags, ids, capacity);
+	mutex_unlock(&cgroup_mutex);
+	return count;
 }
 #endif /* CONFIG_CGROUP_BPF */
 

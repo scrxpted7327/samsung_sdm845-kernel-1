@@ -405,6 +405,8 @@ struct bpf_prog {
 				dst_needed:1;	/* Do we need dst entry? */
 	kmemcheck_bitfield_end(meta);
 	u32			len;		/* Number of filter blocks */
+	u32			jited_len;
+	u8			tag[BPF_TAG_SIZE];
 	enum bpf_prog_type	type;		/* Type of BPF program */
 	struct bpf_prog_aux	*aux;		/* Auxiliary fields */
 	struct sock_fprog_kern	*orig_prog;	/* Original BPF program */
@@ -416,6 +418,13 @@ struct bpf_prog {
 		struct bpf_insn		insnsi[0];
 	};
 };
+
+struct bpf_sock_kern { struct bpf_sock user; struct sock *sk; };
+struct bpf_sock_addr_kern { struct bpf_sock_addr user; struct sock *sk; };
+struct bpf_sockopt_kern { struct bpf_sockopt user; struct sock *sk; u8 *optval; };
+void *bpf_sk_storage_get_value(struct bpf_map *map, struct sock *sk, void *value, u64 flags);
+int bpf_sk_storage_delete_value(struct bpf_map *map, struct sock *sk);
+void bpf_sk_storage_free(struct sock *sk);
 
 struct sk_filter {
 	atomic_t	refcnt;

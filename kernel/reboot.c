@@ -11,6 +11,7 @@
 #include <linux/kexec.h>
 #include <linux/kmod.h>
 #include <linux/kmsg_dump.h>
+#include <linux/moduleparam.h>
 #include <linux/reboot.h>
 #include <linux/suspend.h>
 #include <linux/syscalls.h>
@@ -215,8 +216,14 @@ void migrate_to_reboot_cpu(void)
  *	Shutdown everything and perform a clean reboot.
  *	This is not safe to call in interrupt context.
  */
+/* Debug aid: panic instead so the vendor panic logger keeps the kernel log. */
+static bool panic_on_reboot;
+core_param(panic_on_reboot, panic_on_reboot, bool, 0644);
+
 void kernel_restart(char *cmd)
 {
+	if (panic_on_reboot)
+		panic("restart requested with command '%s'", cmd ? cmd : "");
 	kernel_restart_prepare(cmd);
 	migrate_to_reboot_cpu();
 	syscore_shutdown();

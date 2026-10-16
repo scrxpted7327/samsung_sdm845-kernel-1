@@ -1640,6 +1640,9 @@ void sk_destruct(struct sock *sk)
 
 static void __sk_free(struct sock *sk)
 {
+#ifdef CONFIG_BPF_SYSCALL
+	bpf_sk_storage_free(sk);
+#endif
 	if (unlikely(sk->sk_net_refcnt && sock_diag_has_destroy_listeners(sk)))
 		sock_diag_broadcast_destroy(sk);
 	else

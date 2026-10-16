@@ -58,6 +58,7 @@
  *	Based upon Swansea University Computer Society NET3.039
  */
 
+#include <linux/bpf-cgroup.h>
 #include <linux/mm.h>
 #include <linux/socket.h>
 #include <linux/file.h>
@@ -1791,6 +1792,8 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
+	char *kernel_optval = NULL;
+	mm_segment_t saved_fs;
 
 	if (optlen < 0)
 		return -EINVAL;
@@ -1801,6 +1804,11 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 		if (err)
 			goto out_put;
 
+		err = bpf_cgroup_setsockopt(sock->sk, &level, &optname, optval, &optlen, &kernel_optval);
+		if (err < 0) goto out_put;
+		if (err > 0) { err = 0; goto out_put; }
+		saved_fs = get_fs();
+		if (kernel_optval) { set_fs(KERNEL_DS); optval = (char __user *)kernel_optval; }
 		if (level == SOL_SOCKET)
 			err =
 			    sock_setsockopt(sock, level, optname, optval,
@@ -1809,6 +1817,8 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 			err =
 			    sock->ops->setsockopt(sock, level, optname, optval,
 						  optlen);
+		set_fs(saved_fs);
+		kfree(kernel_optval);
 out_put:
 		fput_light(sock->file, fput_needed);
 	}
@@ -1825,6 +1835,7 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
+	int capacity = 0;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
@@ -1832,6 +1843,9 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 		if (err)
 			goto out_put;
 
+		if (bpf_cgroup_has_program(sock->sk, BPF_CGROUP_GETSOCKOPT) && get_user(capacity, optlen)) {
+			err = -EFAULT; goto out_put;
+		}
 		if (level == SOL_SOCKET)
 			err =
 			    sock_getsockopt(sock, level, optname, optval,
@@ -1840,6 +1854,7 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 			err =
 			    sock->ops->getsockopt(sock, level, optname, optval,
 						  optlen);
+		err = bpf_cgroup_getsockopt(sock->sk, level, optname, optval, optlen, capacity, err);
 out_put:
 		fput_light(sock->file, fput_needed);
 	}
